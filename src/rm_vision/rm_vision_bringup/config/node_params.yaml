@@ -1,0 +1,59 @@
+dart/camera_node:
+  ros__parameters:
+    camera_info_url: "package://rm_vision_bringup/config/camera_info.yaml"
+    pixel_format: "BayerRG8"        # Recommended Option: "RGB8Packed", "BayerRG8"
+    use_sensor_data_qos: false
+    frame_id: "camera_optical_frame"     # If not set, it will be set as <camera_name>_optical_frame
+    camera_topic: "image_raw"         # If not set, it will be set as <camera_name>/image
+    acquisition_frame_rate: 249.1   # Unit: Hz
+    exposure_time: 1000             # Unit: us
+    gain: 1.0                      # Range: 0.0 ~ 16.9, Unit: dB
+
+dart/serial_driver:
+  ros__parameters:
+    timestamp_offset: 0.006
+    device_name: /dev/ttyACM0
+    baud_rate: 115200
+    flow_control: none
+    parity: none
+    stop_bits: "1"
+
+dart/light_detector:
+  ros__parameters:
+    fg_detector_debug_: true
+    cv_detector_debug_: true
+    binary_thres: 10
+    epsilon: 1000
+    contours_ratio_min: 50
+    contours_ratio_max: 150
+    contours_area_min: 3000
+    contours_area_max: 20000
+    filled_ratio_min: 5
+    filled_ratio_max: 60
+    ellipse_area_min: 500
+    ellipse_area_max: 10000
+    filled_ratio_min: 0
+    filled_ratio_max: 50
+    detect_color: 0
+
+dart/light_tracker:
+  ros__parameters:
+    kf:
+      r_pos: 0.01
+      q_pos: 0.05
+      q_vel: 1.0
+    tracker:
+      lost_time_thres: 0.3
+      tracking_thres: 2
+
+/rm_auto_record:
+  ros__parameters:
+    uri: "/ros_ws/"
+    topic_name:
+    - "/image_raw/compressed"
+    - "/camera_info"
+    - "/detector/armors"
+    topic_type:
+    - "sensor_msgs/msg/CompressedImage"
+    - "sensor_msgs/msg/CameraInfo"
+    - "auto_aim_interfaces/msg/Armors"
