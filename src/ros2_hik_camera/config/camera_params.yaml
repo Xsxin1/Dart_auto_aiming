@@ -1,0 +1,16 @@
+/hik_camera:
+  ros__parameters:
+    camera_name: narrow_stereo
+
+    exposure_time: 6000
+    gain: 10.0
+
+    weight_path: "./src/detector/weight/best_openvino_model/best.xml"
+    detector_thres: 0.5
+    detect:
+      q: 0.0000001
+      cx: 675.0
+      cy: 600.0
+      pre_gain: 1.0
+
+

@@ -1,0 +1,11 @@
+camera: hik
+
+odom2camera:
+  xyz: "\"0.0 0.0  0.0\""
+  rpy: "\"0.0  0.0  0.0\""
+
+camera_log_level: DEBUG
+serial_log_level: INFO
+localizer_node_log_level: INFO
+auto_record_log_level: INFO
+planning_node_log_level: INFO

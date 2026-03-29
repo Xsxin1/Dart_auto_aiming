@@ -1,0 +1,8 @@
+build/
+log/
+install/
+
+**MvSdkLog/
+kernel.errors.txt
+
+.vscode/

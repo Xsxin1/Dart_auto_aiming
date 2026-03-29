@@ -1,0 +1,5 @@
+namespace,type,name,default_value
+detector,std::string,weight_path,"./src/ros2_hik_camera/weight/light_320/best_openvino_model/best.xml"
+detector,double,conf_thres,0.25
+detector,double,nms_thres,0.45
+detector,double,dyaw_factor,0.001
