@@ -66,32 +66,18 @@ private:
 
   /*****************************KALMAN FILTER***************************/
   void kalmanInit();
-  cv::Point tracker(cv::Rect & rect, cv::Mat & origin, float delay_time);
-  inline std::pair<double, double> pixel2angle(const cv::Point2f & pt);
-  float compute_laser_pitch(float H_armor, float h_armor, float H_laser);
-  double limit(double value, double min, double max)
-  {
-    if (value < min) return min;
-    if (value > max) return max;
-    return value;
-  };
+  cv::Point2f kalmanUpdate(cv::Point2f measured_pos, double current_timestamp);
+  cv::Point2f kalmanPredictOnly(double current_timestamp);
 
-  KalmanFilter kf;
-  Mat meas;
-  int max_lost_frames = 20;
-  int max_lost_hit_frames = 10;
-  double q;      // process noise
-  double r_max;  // measurement noise
-  double r_min;  // measurement noise
-  double pre_gain = 0;
-  bool hitted;
-  double pitch_offset;
-  double pitch_offset_gain;
-
-  int pre_step = 10;
+  cv::KalmanFilter kf;
+  bool kf_initialized;
+  cv::Mat measurement;
+  double last_timestamp;
+  int lost_count_;
+  std_msgs::msg::Header header;
 
   /*****************************OPENVINO***************************/
-  cv::Rect detectYOLO(cv::Mat & origin, float size);
+  cv::Point2f detectYOLO(cv::Mat & origin, cv::Mat & viz, float size);
 
   YOLO_OPENVINO yolo_openvino;
   ov::CompiledModel model;
@@ -121,6 +107,7 @@ private:
   // 声明参数
   void declareParameters();
 
+  rclcpp::node_interfaces::OnSetParametersCallbackHandle::SharedPtr params_callback_handle_;
   // 参数回调函数
   rcl_interfaces::msg::SetParametersResult parametersCallback(
     const std::vector<rclcpp::Parameter> & parameters);

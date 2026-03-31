@@ -1,4 +1,4 @@
-// 生成时间: 2026-03-29 19:44:30
+// 生成时间: 2026-03-31 16:06:11
 // params.h
 #ifndef PARAMS_H
 #define PARAMS_H
@@ -30,6 +30,9 @@ extern std::string weight_path;
 extern double conf_thres;
 extern double nms_thres;
 extern double dyaw_factor;
+extern int binary_thres;
+extern double filled_ratio;
+extern int loss_thres;
 
                 
 } // namespace Params

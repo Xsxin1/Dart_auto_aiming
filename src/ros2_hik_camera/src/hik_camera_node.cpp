@@ -7,65 +7,62 @@ void HikCameraNode ::processImage(cv::Mat & rgb_image)
 {
   auto start = std::chrono::steady_clock::now();
 
-  std_msgs::msg::Header header;
   header.stamp = this->now();
   header.frame_id = "cam";
 
-  cv::Mat image;
-  cv::cvtColor(rgb_image, image, cv::COLOR_RGB2BGR);
+  cv::Mat bgr_img, viz;
+  cv::cvtColor(rgb_image, bgr_img, cv::COLOR_RGB2BGR);
+  cv::cvtColor(rgb_image, viz, cv::COLOR_RGB2BGR);
 
-  auto target = detectYOLO(image, 320);
+  auto target = detectYOLO(bgr_img, viz, 320);
 
-  if (target.area() > 0) {
-    cv::rectangle(image, target, cv::Scalar(0, 255, 0), 2);
-    std::vector<std::vector<cv::Point>> contours_;
+  double current_timestamp = header.stamp.sec + header.stamp.nanosec * 1e-9;
 
-    cv::Mat roi = image(target);
-
-    roi_pub_.publish(cv_bridge::CvImage(header, "bgr8", roi).toImageMsg());
-    cv::Mat gray;
-    cv::cvtColor(roi, gray, cv::COLOR_BGR2GRAY);
-    cv::findContours(gray, contours_, cv::RETR_EXTERNAL, cv::CHAIN_APPROX_SIMPLE);
-
-    std::remove_if(contours_.begin(), contours_.end(), [](const std::vector<cv::Point> & contour) {
-      return cv::contourArea(contour) < 10;
-    });
-
-    if (contours_.size() == 1) {
-      auto bound_rect = cv::boundingRect(contours_[0]);
-
-      std_msgs::msg::Float64 dyaw_msg;
-      dyaw_msg.data =
-        (target.tl().x - image.cols / 2 + (bound_rect.tl().x + bound_rect.br().x) / 2) ;
-
-      cv::putText(
-        image, "dyaw: " + std::to_string(dyaw_msg.data), cv::Point(10, 60),
-        cv::FONT_HERSHEY_SIMPLEX, 1, cv::Scalar(0, 255, 0), 2);
-
-      dyaw_msg.data *= Params::dyaw_factor;
-      dyaw_pub_->publish(dyaw_msg);
+  cv::Point2f filtered_center(-1, -1);
+  if (target.x != -1) {
+    filtered_center = kalmanUpdate(target, current_timestamp);
+    lost_count_ = 0;
+  } else {
+    if (kf_initialized_) {
+      filtered_center = kalmanPredictOnly(current_timestamp);
+      lost_count_++;
+      if (lost_count_ > Params::loss_thres) {
+        kf_initialized_ = false;
+        RCLCPP_WARN(this->get_logger(), "Target lost for too long, Kalman reset");
+      }
     }
   }
 
-  //   auto aiming = tracker(target, image, delay);
+  if (filtered_center.x != -1) {
+    cv::circle(viz, filtered_center, 5, cv::Scalar(0, 0, 255), -1);
+
+    std_msgs::msg::Float64 dyaw_msg;
+    dyaw_msg.data = filtered_center.x;
+
+    cv::putText(
+      viz, "dyaw: " + std::to_string(filtered_center.x), cv::Point(10, 60),
+      cv::FONT_HERSHEY_SIMPLEX, 1, cv::Scalar(0, 255, 0), 2);
+
+    dyaw_msg.data *= Params::dyaw_factor;
+    dyaw_pub_->publish(dyaw_msg);
+  }
 
   auto end = std::chrono::steady_clock::now();
   auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count();
   cv::putText(
-    image, std::to_string(duration) + "ms", cv::Point(10, 30), cv::FONT_HERSHEY_SIMPLEX, 1,
+    viz, std::to_string(duration) + "ms", cv::Point(10, 30), cv::FONT_HERSHEY_SIMPLEX, 1,
     cv::Scalar(0, 255, 0), 2);
 
   cv::line(
-    image, cv::Point(image.cols / 2, 0), cv::Point(image.cols / 2, image.rows),
-    cv::Scalar(0, 0, 255), 2);
+    viz, cv::Point(viz.cols / 2, 0), cv::Point(viz.cols / 2, viz.rows), cv::Scalar(0, 0, 255), 2);
 
-  res_pub_.publish(cv_bridge::CvImage(header, "bgr8", image).toImageMsg());
+  res_pub_.publish(cv_bridge::CvImage(header, "bgr8", viz).toImageMsg());
 }
 
 void HikCameraNode ::init()
 {
   RCLCPP_INFO(this->get_logger(), "Detector Node Initialized");
-  // kalmanInit();
+  kalmanInit();
   declareParams();
   createDebugPub();
 
@@ -79,57 +76,6 @@ void HikCameraNode ::init()
 
   yolo_openvino.yolov5_compiled(Params::weight_path, model);
 }
-
-// void HikCameraNode ::kalmanInit()
-// {                                   // kalman filter（CV MODEL）
-//   kf = KalmanFilter(9, 3, 0);       //[x,y,z,vx,vy,vz,ax,ay,az]
-//   meas = Mat::zeros(3, 1, CV_32F);  //[x,y,z]
-//   // 状态转移矩阵 (9x9)
-//   double dt = 0.01;
-//   double dt2 = dt * dt;
-//   double dt3 = dt * dt * dt;
-//   double dt4 = dt * dt * dt * dt;
-//   kf.transitionMatrix =
-//     (Mat_<float>(9, 9) << 1, 0, 0, dt, 0, 0, 0.5 * dt2, 0, 0,  // x = x + vx*dt+ 0.5*dt^2*ax
-//      0, 1, 0, 0, dt, 0, 0, 0.5 * dt2, 0,                       // y = y + vy*dt+ 0.5*dt^2*ay
-//      0, 0, 1, 0, 0, dt, 0, 0, 0.5 * dt2,                       // z = z + vz*dt+ 0.5*dt^2*az
-//      0, 0, 0, 1, 0, 0, dt, 0, 0,                               // vx = vx + ax*dt
-//      0, 0, 0, 0, 1, 0, 0, dt, 0,                               // vy = vy + ay*dt
-//      0, 0, 0, 0, 0, 1, 0, 0, dt,                               // vz = vz + az*dt
-//      0, 0, 0, 0, 0, 0, 1, 0, 0,                                // ax = ax
-//      0, 0, 0, 0, 0, 0, 0, 1, 0,                                // ay = ay
-//      0, 0, 0, 0, 0, 0, 0, 0, 1);                               // az = az
-
-//   // 测量矩阵 (3x9: 只观测位置)
-//   kf.measurementMatrix =
-//     (Mat_<float>(3, 9) << 1, 0, 0, 0, 0, 0, 0, 0, 0,  // 测量x
-//      0, 1, 0, 0, 0, 0, 0, 0, 0,                       // 测量y
-//      0, 0, 1, 0, 0, 0, 0, 0, 0);                      // 测量z
-
-//   // 过程噪声协方差 (9x9)
-//   kf.processNoiseCov =
-//     (Mat_<float>(9, 9) << 0.25 * dt4, 0, 0, 0.5 * dt3, 0, 0, 0.5 * dt2, 0, 0,  //
-//      0, 0.25 * dt4, 0, 0, 0.5 * dt3, 0, 0, 0.5 * dt2, 0,                       //
-//      0, 0, 0.25 * dt4, 0, 0, 0.5 * dt3, 0, 0, 0.5 * dt2,                       //
-//      0.5 * dt3, 0, 0, dt2, 0, 0, dt, 0, 0,                                     //
-//      0, 0.5 * dt3, 0, 0, dt2, 0, 0, dt, 0,                                     //
-//      0, 0, 0.5 * dt3, 0, 0, dt2, 0, 0, dt,                                     //
-//      0.5 * dt2, 0, 0, dt, 0, 0, 1, 0, 0,                                       //
-//      0, 0.5 * dt2, 0, 0, dt, 0, 0, 1, 0,                                       //
-//      0, 0, 0.5 * dt2, 0, 0, dt, 0, 0, 1);                                      //
-//   // 测量噪声协方差 (3x3)
-//   float r = 0.1;
-//   kf.measurementNoiseCov =
-//     (Mat_<float>(3, 3) << r, 0, 0,  //1
-//      0, r, 0,                       //2
-//      0, 0, r);
-
-//   // 后验误差协方差初始化 (9x9单位矩阵)
-//   setIdentity(kf.errorCovPost, Scalar::all(1));
-
-//   // 初始化状态 (9x1向量)
-//   randn(kf.statePost, Scalar::all(0), Scalar::all(q));
-// }
 
 void HikCameraNode::declareParams()
 {
@@ -196,253 +142,170 @@ void HikCameraNode::paramsEventCB(const rcl_interfaces::msg::ParameterEvent & ev
   }
 }
 
-cv::Rect HikCameraNode::detectYOLO(cv::Mat & origin, float size = 640.0)
+cv::Point2f HikCameraNode::detectYOLO(cv::Mat & origin, cv::Mat & viz, float size = 640.0)
 {
-  cv::Rect target;
+  cv::Point2f target(-1, -1);
   if (origin.empty()) return target;
 
-  Mat viz;
-  vector<cv::Rect> output_box;
+  std::vector<cv::Rect> output_box;
+  std::vector<float> output_confidence;
+  std::vector<Detection> candidates;
 
-  target = yolo_openvino.yolov5_detector(
-    model, origin, viz, output_box, size, Params::conf_thres, Params::nms_thres);
+  yolo_openvino.yolov5_detector(
+    model, origin, viz, output_box, output_confidence, size, Params::conf_thres, Params::nms_thres);
+
+  for (size_t i = 0; i < output_box.size(); ++i) {
+    const auto & box = output_box[i];
+    std::vector<std::vector<cv::Point>> contours_;
+
+    cv::Mat roi = origin(box);
+
+    cv::Mat gray, binary;
+    cv::cvtColor(roi, gray, cv::COLOR_BGR2GRAY);
+    cv::threshold(gray, binary, Params::binary_thres, 255, cv::THRESH_BINARY);
+
+    cv::findContours(binary, contours_, cv::RETR_EXTERNAL, cv::CHAIN_APPROX_SIMPLE);
+
+    contours_.erase(
+      std::remove_if(
+        contours_.begin(), contours_.end(),
+        [](const std::vector<cv::Point> & contour) {
+          double area = cv::contourArea(contour);
+          double rect_area = cv::boundingRect(contour).area();
+          if (rect_area == 0) return true;
+          double filled_ratio = area / rect_area;
+          return filled_ratio < Params::filled_ratio;
+        }),
+      contours_.end());
+
+    if (!contours_.empty()) {
+      auto rect = cv::boundingRect(contours_[0]);
+      Detection det;
+      det.confidence = output_confidence[i];
+      det.box = box;
+      det.center = cv::Point((rect.tl().x + rect.br().x) / 2, (rect.tl().y + rect.br().y) / 2);
+      candidates.push_back(det);
+    }
+  }
+
+  std::sort(candidates.begin(), candidates.end(), [](const Detection & a, const Detection & b) {
+    return a.confidence > b.confidence;
+  });
+
+  if (candidates.size() > 0) {
+    auto & best = candidates[0];
+    cv::rectangle(viz, best.box, cv::Scalar(0, 255, 255), 2);
+    cv::circle(viz, best.center, 5, cv::Scalar(0, 255, 255), -1);
+
+    target.x = best.box.tl().x + best.center.x;
+    target.y = best.box.tl().y + best.center.y;
+
+    roi_pub_.publish(cv_bridge::CvImage(header, "bgr8", origin(best.box)).clone().toImageMsg());
+  }
 
   return target;
 }
 
-// cv::Point HikCameraNode::tracker(cv::Rect & rect, cv::Mat & origin, float delay_time)
-// {
-//   const float armor_height = 0.07;   // unit:m
-//   const float laser_height = 0.026;  // unit:m
-//   double meas_yaw, meas_pitch;
-//   double pre_yaw, pre_pitch;
-//   float X, Y, Z;
+void HikCameraNode::kalmanInit()
+{
+  // 使用CV模型（匀速运动模型），状态向量：[x, y, vx, vy]
+  int stateSize = 4;  // 状态维度：x, y, vx, vy
+  int measSize = 2;   // 测量维度：x, y
+  int contrSize = 0;  // 控制维度
 
-//   // const float serial_delay = 0.1;
-//   // const float ros_delay = 0.00;
-//   double dt = delay_time;
-//   double dt2 = dt * dt;
-//   double dt3 = dt * dt * dt;
-//   double dt4 = dt * dt * dt * dt;
-//   kf.transitionMatrix =
-//     (Mat_<float>(9, 9) << 1, 0, 0, dt, 0, 0, 0.5 * dt2, 0, 0,  // x = x + vx*dt+ 0.5*dt^2*ax
-//      0, 1, 0, 0, dt, 0, 0, 0.5 * dt2, 0,                       // y = y + vy*dt+ 0.5*dt^2*ay
-//      0, 0, 1, 0, 0, dt, 0, 0, 0.5 * dt2,                       // z = z + vz*dt+ 0.5*dt^2*az
-//      0, 0, 0, 1, 0, 0, dt, 0, 0,                               // vx = vx + ax*dt
-//      0, 0, 0, 0, 1, 0, 0, dt, 0,                               // vy = vy + ay*dt
-//      0, 0, 0, 0, 0, 1, 0, 0, dt,                               // vz = vz + az*dt
-//      0, 0, 0, 0, 0, 0, 1, 0, 0,                                // ax = ax
-//      0, 0, 0, 0, 0, 0, 0, 1, 0,                                // ay = ay
-//      0, 0, 0, 0, 0, 0, 0, 0, 1);                               // az = az
+  kf = cv::KalmanFilter(stateSize, measSize, contrSize, CV_32F);
 
-//   kf.processNoiseCov =
-//     (Mat_<float>(9, 9) << 0.25 * dt4, 0, 0, 0.5 * dt3, 0, 0, 0.5 * dt2, 0, 0,  //
-//      0, 0.25 * dt4, 0, 0, 0.5 * dt3, 0, 0, 0.5 * dt2, 0,                       //
-//      0, 0, 0.25 * dt4, 0, 0, 0.5 * dt3, 0, 0, 0.5 * dt2,                       //
-//      0.5 * dt3, 0, 0, dt2, 0, 0, dt, 0, 0,                                     //
-//      0, 0.5 * dt3, 0, 0, dt2, 0, 0, dt, 0,                                     //
-//      0, 0, 0.5 * dt3, 0, 0, dt2, 0, 0, dt,                                     //
-//      0.5 * dt2, 0, 0, dt, 0, 0, 1, 0, 0,                                       //
-//      0, 0.5 * dt2, 0, 0, dt, 0, 0, 1, 0,                                       //
-//      0, 0, 0.5 * dt2, 0, 0, dt, 0, 0, 1);
+  // 状态转移矩阵 F (4x4)
+  // [1, 0, dt, 0]
+  // [0, 1, 0, dt]
+  // [0, 0, 1, 0]
+  // [0, 0, 0, 1]
+  double dt = 0.01;  // 100fps，约10ms一帧
+  kf.transitionMatrix = (cv::Mat_<float>(4, 4) << 1, 0, dt, 0, 0, 1, 0, dt, 0, 0, 1, 0, 0, 0, 0, 1);
 
-//   bool has_armor = rect.area() > 0;
-//   // check hit
-//   bool in_rect = false;
-//   static bool initialized = false;
-//   static int lost_counter = 0;
-//   static std::chrono::_V2::steady_clock::time_point pre, cur;  // unit: ms
+  // 测量矩阵 H (2x4)
+  kf.measurementMatrix = (cv::Mat_<float>(2, 4) << 1, 0, 0, 0, 0, 1, 0, 0);
 
-//   // 卡尔曼预测（先predict，后correct）
-//   // float r =
-//   //   sqrt(pow(kf.statePre.at<float>(3), 2) + pow(kf.statePre.at<float>(4), 2)) > 0.5 ? r_max : r_min;
-//   // cout << "speed: " << sqrt(pow(kf.statePre.at<float>(3), 2) + pow(kf.statePre.at<float>(4), 2))
-//   //      << "R:" << r << endl;
+  // 过程噪声协方差矩阵 Q (4x4)
+  // 位置噪声和速度噪声
+  float processNoisePos = 1e-2;  // 位置过程噪声
+  float processNoiseVel = 1e-2;  // 速度过程噪声
+  kf.processNoiseCov =
+    (cv::Mat_<float>(4, 4) << processNoisePos, 0, 0, 0, 0, processNoisePos, 0, 0, 0, 0,
+     processNoiseVel, 0, 0, 0, 0, processNoiseVel);
 
-//   kf.measurementNoiseCov.at<float>(0, 0) = r_max;
-//   kf.measurementNoiseCov.at<float>(1, 1) = r_max;
-//   kf.measurementNoiseCov.at<float>(2, 2) = r_max;
+  // 测量噪声协方差矩阵 R (2x2)
+  float measureNoisePos = 5.0;  // 测量噪声，可根据实际情况调整
+  kf.measurementNoiseCov = (cv::Mat_<float>(2, 2) << measureNoisePos, 0, 0, measureNoisePos);
 
-//   cv::Mat state = kf.predict();
-//   float pred_x = state.at<float>(0);
-//   float pred_y = state.at<float>(1);
-//   float pred_z = state.at<float>(2);
+  // 后验误差协方差矩阵 P (4x4)
+  setIdentity(kf.errorCovPost, cv::Scalar::all(1));
 
-//   if (has_armor) {
-//     cv::Rect detect_rect = cv::Rect(
-//       rect.x + rect.width * 0.05, rect.y + rect.height * 0.142, rect.width * 0.9,
-//       rect.height * 0.714);
-//     rectangle(origin, detect_rect, cv::Scalar(0, 0, 255), 2);
-//     in_rect = detect_rect.contains(cv::Point(cx, cy));
+  // 初始化状态向量
+  kf.statePost = cv::Mat::zeros(stateSize, 1, CV_32F);
 
-//     Z = fy * armor_height / rect.height;
-//     if (Z > 5.6 || Z < 0.1) {
-//       initialized = false;
-//       return cv::Point(0, 0);
-//     }
-//     X = (rect.x + rect.width / 2.0 - cx) / fx * Z;
-//     Y = (rect.y + rect.height / 2.0 - cy) / fy * Z;
-//     meas.at<float>(0) = X;
-//     meas.at<float>(1) = Y;
-//     meas.at<float>(2) = Z;
-//     if (state.at<float>(0) + state.at<float>(1) - meas.at<float>(0) - meas.at<float>(1) > 2) {
-//       has_armor = false;
-//     }
-//   }
+  kf_initialized = false;
+  measurement = cv::Mat::zeros(measSize, 1, CV_32F);
+  last_timestamp = 0.0;
+  lost_count_ = 0;
+}
 
-//   // update kalman state
-//   if (!initialized && has_armor) {
-//     // stateVector: [x, y, z, vx, vy ,vz]
-//     kf.statePost.at<float>(0) = X;
-//     kf.statePost.at<float>(1) = Y;
-//     kf.statePost.at<float>(2) = Z;
-//     kf.statePost.at<float>(3) = 0;
-//     kf.statePost.at<float>(4) = 0;
-//     kf.statePost.at<float>(5) = 0;
-//     kf.statePost.at<float>(6) = 0;
-//     kf.statePost.at<float>(7) = 0;
-//     kf.statePost.at<float>(8) = 0;
-//     initialized = true;
-//     lost_counter = 0;
-//     pre = std::chrono::steady_clock::now();
-//     cur = std::chrono::steady_clock::now();
-//   }
-//   // else if (initialized && has_armor && pred_y > 0) {
-//   //   kf.statePost.at<float>(3) = 0;
-//   //   kf.statePost.at<float>(4) = 0;
-//   //   kf.statePost.at<float>(5) = 0;
-//   //   kf.statePost.at<float>(6) = 0;
-//   //   kf.statePost.at<float>(7) = 0;
-//   //   kf.statePost.at<float>(8) = 0;
-//   // }
+cv::Point2f HikCameraNode::kalmanUpdate(cv::Point2f measured_pos, double current_timestamp)
+{
+  // 计算时间差
+  if (!kf_initialized) {
+    // 首次检测，初始化卡尔曼滤波器状态
+    kf.statePost.at<float>(0) = measured_pos.x;
+    kf.statePost.at<float>(1) = measured_pos.y;
+    kf.statePost.at<float>(2) = 0;  // 初始vx
+    kf.statePost.at<float>(3) = 0;  // 初始vy
+    kf_initialized = true;
+    last_timestamp = current_timestamp;
+    return measured_pos;
+  }
 
-//   // updata track state
-//   if (!has_armor) {
-//     lost_counter++;
-//     if (lost_counter > max_lost_frames) {
-//       initialized = false;
-//       const float lost_gain = exp(-lost_counter * 0.5f);  // 指数衰减
-//       kf.statePost.at<float>(3) *= lost_gain;
-//       kf.statePost.at<float>(4) *= lost_gain;
-//       kf.statePost.at<float>(5) *= lost_gain;
-//       setIdentity(kf.errorCovPost, Scalar::all(1.0));  // 重置不确定性
-//       // RCLCPP_WARN_STREAM(this->get_logger(), "Armor lost");
-//     }
-//   } else {
-//     state = kf.correct(meas);
-//     pred_x = state.at<float>(0);
-//     pred_y = state.at<float>(1);
-//     pred_z = state.at<float>(2);
-//     RCLCPP_DEBUG_STREAM(
-//       this->get_logger(), "Armor prediction: " << pred_x << ", " << pred_y << ", " << pred_z);
-//     lost_counter = 0;
+  // 计算时间差，用于更新状态转移矩阵
+  double dt = current_timestamp - last_timestamp;
+  if (dt > 0) {
+    // 更新状态转移矩阵中的dt
+    kf.transitionMatrix.at<float>(0, 2) = dt;
+    kf.transitionMatrix.at<float>(1, 3) = dt;
+  }
 
-//     // predict
-//     Mat savedState = kf.statePost.clone();
-//     Mat savedCov = kf.errorCovPost.clone();
+  // 预测步骤
+  cv::Mat prediction = kf.predict();
+  cv::Point2f predicted_pos(prediction.at<float>(0), prediction.at<float>(1));
 
-//     for (int j = 0; j < pre_step; j++) {
-//       Mat predictState = kf.transitionMatrix * savedState;
-//       Mat predictCov =
-//         kf.transitionMatrix * savedCov * kf.transitionMatrix.t() + kf.processNoiseCov;
+  // 更新测量值
+  measurement.at<float>(0) = measured_pos.x;
+  measurement.at<float>(1) = measured_pos.y;
 
-//       circle(
-//         origin,
-//         cv::Point2f(
-//           fx * tan(predictState.at<float>(0) / predictState.at<float>(2)) + cx,
-//           fy * tan(predictState.at<float>(1) / predictState.at<float>(2)) + cy),
-//         2, cv::Scalar(0, 0, 255));
-//       // cout << "predict:" << fx * tan(predictState.at<float>(0) / predictState.at<float>(2)) + cx
-//       //      << ", " << fy * tan(predictState.at<float>(1) / predictState.at<float>(2)) + cy << endl;
+  // 更新步骤
+  cv::Mat estimated = kf.correct(measurement);
+  cv::Point2f filtered_pos(estimated.at<float>(0), estimated.at<float>(1));
 
-//       savedState = predictState;
-//       savedCov = predictCov;
-//     }
-//     pred_x = savedState.at<float>(0);
-//     pred_y = savedState.at<float>(1);
-//     pred_z = savedState.at<float>(2);
+  last_timestamp = current_timestamp;
 
-//     std_msgs::msg::Float32 gimbal_yaw_i_msg;
-//     rclcpp::Time current_time = this->now();
+  return filtered_pos;
+}
 
-//     rclcpp::Duration image_delay = current_time - image_time_;
-//     double image_delay_second = image_delay.seconds();
+cv::Point2f HikCameraNode::kalmanPredictOnly(double current_timestamp)
+{
+  // 计算时间差
+  double dt = current_timestamp - last_timestamp;
+  if (dt > 0.1) dt = 0.01;  // 限制最大时间差
+  if (dt > 0) {
+    kf.transitionMatrix.at<float>(0, 2) = dt;
+    kf.transitionMatrix.at<float>(1, 3) = dt;
+  }
 
-//     rclcpp::Duration serial_delay(rclcpp::Duration::from_seconds(delay_test));
-//     rclcpp::Time last_time_ = image_time_ - serial_delay;
-//     rclcpp::Duration total_time = current_time - last_time_;
+  // 预测步骤
+  cv::Mat prediction = kf.predict();
+  cv::Point2f predicted_pos(prediction.at<float>(0), prediction.at<float>(1));
 
-//     gimbal_yaw_i_msg.data = calculateRotation(last_time_, current_time);
-//     debug_pub_->publish(gimbal_yaw_i_msg);
-
-//     RCLCPP_DEBUG_STREAM(this->get_logger(), "Time delay: " << total_time.seconds() << "s");
-
-//     pre_yaw = -atan2((pred_x + state.at<float>(3) * delay_time), pred_z) -
-//               gimbal_yaw_i_msg.data * delay_gain;
-
-//     pre_pitch = atan2((pred_y + pitch_offset + pitch_offset_gain * pred_z), pred_z);
-
-//     // auto [meas_yaw, meas_pitch] = pixel2angle((rect.br() + rect.tl()) / 2);
-//     // auto laser_pitch = compute_laser_pitch(armor_height, rect.height, laser_height);
-//     // pred_z -= laser_pitch;
-
-//     // RCLCPP_DEBUG_STREAM(
-//     //   this->get_logger(), "meas p:" << meas_pitch << " a_p" << laser_pitch << " y" << meas_yaw);
-//   }
-
-//   // adjust hitted
-//   static int lost_hit_counter = 0;
-//   if (in_rect) {
-//     cur = std::chrono::steady_clock::now();
-//     lost_hit_counter = 0;
-//   } else {
-//     lost_hit_counter++;
-//     if (lost_hit_counter > max_lost_hit_frames) pre = std::chrono::steady_clock::now();
-//   }
-//   // cout << "lost_hit_counter: " << lost_hit_counter << endl;
-
-//   auto hitted_time = duration_cast<milliseconds>(cur - pre).count();  // unit: ms
-
-//   std_msgs::msg::Bool hitted_flag;
-//   if (hitted_time > hitted_min_time) {
-//     hitted_flag.data = hitted = true;
-//   } else {
-//     hitted_flag.data = hitted = false;
-//   }
-//   hitted_pub_->publish(hitted_flag);
-
-//   // RCLCPP_DEBUG(
-//   //   this->get_logger(), "Hitted time: %ld ms, Hitted: %s", hitted_time,
-//   //   hitted_flag.data ? "true" : "false");
-
-//   // publish
-//   if (initialized) {
-//     // Publish detected armor
-//     geometry_msgs::msg::Point point;
-//     point.x = 1;
-//     point.y = limit(pre_yaw, -CV_PI / 6, CV_PI / 6) + gimble_yaw;
-//     point.z = limit(pre_pitch, -CV_PI / 12, CV_PI / 12) + gimbal_pitch;
-//     enemy_dposition_pub_->publish(point);
-
-//     RCLCPP_DEBUG_STREAM(this->get_logger(), "Armor dangle: " << point.y << ", " << point.z);
-//     RCLCPP_DEBUG_STREAM(
-//       this->get_logger(), "Armor dposition: " << pred_x << ", " << pred_y << ", " << pred_z);
-//   }
-//   // else {
-//   //   // Publish detected armor
-//   //   geometry_msgs::msg::Point point;
-
-//   //   point.x = -1;
-//   //   point.y = enemy_angle * -gimble_yaw;
-//   //   point.z = 0;
-//   //   enemy_dposition_pub_->publish(point);
-//   //   return cv::Point(0, 0);
-
-//   //   RCLCPP_DEBUG_STREAM(this->get_logger(), "Armor dangle: " << point.y << ", " << point.z);
-//   // }
-
-//   return cv::Point2f(fx * tan(pred_x / pred_z) + cx, fy * tan(pred_y / pred_z) + cy);
-// }
+  last_timestamp = current_timestamp;
+  return predicted_pos;
+}
 
 void HikCameraNode::createDebugPub()
 {
@@ -490,6 +353,8 @@ HikCameraNode::HikCameraNode(const rclcpp::NodeOptions & options) : Node("hik_ca
   convert_param_.nDstBufferSize = image_buffer_.size();
 
   declareParameters();
+  params_callback_handle_ = this->add_on_set_parameters_callback(
+    std::bind(&HikCameraNode::parametersCallback, this, std::placeholders::_1));
   /***Start***/
   init();
   /***End***/

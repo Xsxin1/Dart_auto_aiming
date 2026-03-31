@@ -86,7 +86,8 @@ void YOLO_OPENVINO::yolov5_compiled(std::string xml_path, ov::CompiledModel & co
 
 cv::Rect YOLO_OPENVINO::yolov5_detector(
   ov::CompiledModel compiled_model, cv::Mat & input_detect_img, cv::Mat & output_detect_img,
-  vector<cv::Rect> & nms_box, float size = 640.0, float conf_thres = 0.4, float nms_thres = 0.4)
+  vector<cv::Rect> & nms_box, vector<int> & nms_confidence, float size = 640.0,
+  float conf_thres = 0.4, float nms_thres = 0.4)
 {
   cv::Mat & img = input_detect_img;
   vector<cv::Rect> boxes;
@@ -161,16 +162,17 @@ cv::Rect YOLO_OPENVINO::yolov5_detector(
   nms_box.reserve(nms_result.size());
   for (int idx : nms_result) {
     nms_box.push_back(boxes[idx]);
+    nms_confidence.push_back(confidences[idx]);
   }
 
   // 绘制结果
-  // img.copyTo(output_detect_img);
+  img.copyTo(output_detect_img);
   for (int i = 0; i < nms_result.size(); i++) {
     int idx = nms_result[i];
     cv::Rect box = boxes[idx];
-    cv::rectangle(input_detect_img, box, cv::Scalar(0, 255, 0), 2);
+    cv::rectangle(output_detect_img, box, cv::Scalar(0, 255, 0), 2);
     cv::putText(
-      input_detect_img, to_string(confidences[idx]), box.tl(), cv::FONT_HERSHEY_SIMPLEX, 0.8,
+      output_detect_img, to_string(confidences[idx]), box.tl(), cv::FONT_HERSHEY_SIMPLEX, 0.8,
       cv::Scalar(0, 0, 255), 2);
   }
   if (confidences.size() > 0) {
