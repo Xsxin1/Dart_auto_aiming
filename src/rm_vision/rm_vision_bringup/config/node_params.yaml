@@ -9,6 +9,9 @@
       conf_thres: 0.7
       nms_thres: 0.4
       dyaw_factor: 0.01
+      binary_thres: 100
+      filled_ratio: 0.5
+      loss_thres: 10
    
 
 /serial_driver:

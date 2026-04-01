@@ -47,5 +47,5 @@ def generate_launch_description():
         # PushRosNamespace('xsx'),
         serial_driver_node,
         hik_camera,
-        # foxglove_bridge,
+        foxglove_bridge,
     ])

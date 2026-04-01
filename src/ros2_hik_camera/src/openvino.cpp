@@ -86,7 +86,7 @@ void YOLO_OPENVINO::yolov5_compiled(std::string xml_path, ov::CompiledModel & co
 
 cv::Rect YOLO_OPENVINO::yolov5_detector(
   ov::CompiledModel compiled_model, cv::Mat & input_detect_img, cv::Mat & output_detect_img,
-  vector<cv::Rect> & nms_box, vector<int> & nms_confidence, float size = 640.0,
+  vector<cv::Rect> & nms_box, vector<float> & nms_confidence, float size = 640.0,
   float conf_thres = 0.4, float nms_thres = 0.4)
 {
   cv::Mat & img = input_detect_img;

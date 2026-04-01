@@ -23,11 +23,11 @@ void HikCameraNode ::processImage(cv::Mat & rgb_image)
     filtered_center = kalmanUpdate(target, current_timestamp);
     lost_count_ = 0;
   } else {
-    if (kf_initialized_) {
+    if (kf_initialized) {
       filtered_center = kalmanPredictOnly(current_timestamp);
       lost_count_++;
       if (lost_count_ > Params::loss_thres) {
-        kf_initialized_ = false;
+        kf_initialized = false;
         RCLCPP_WARN(this->get_logger(), "Target lost for too long, Kalman reset");
       }
     }
@@ -200,7 +200,7 @@ cv::Point2f HikCameraNode::detectYOLO(cv::Mat & origin, cv::Mat & viz, float siz
     target.x = best.box.tl().x + best.center.x;
     target.y = best.box.tl().y + best.center.y;
 
-    roi_pub_.publish(cv_bridge::CvImage(header, "bgr8", origin(best.box)).clone().toImageMsg());
+    roi_pub_.publish(cv_bridge::CvImage(header, "bgr8", origin(best.box)).toImageMsg());
   }
 
   return target;
@@ -235,7 +235,7 @@ void HikCameraNode::kalmanInit()
      processNoiseVel, 0, 0, 0, 0, processNoiseVel);
 
   // 测量噪声协方差矩阵 R (2x2)
-  float measureNoisePos = 5.0;  // 测量噪声，可根据实际情况调整
+  float measureNoisePos = 0.0001;  // 测量噪声，可根据实际情况调整
   kf.measurementNoiseCov = (cv::Mat_<float>(2, 2) << measureNoisePos, 0, 0, measureNoisePos);
 
   // 后验误差协方差矩阵 P (4x4)
@@ -437,9 +437,6 @@ rcl_interfaces::msg::SetParametersResult HikCameraNode ::parametersCallback(
         result.successful = false;
         result.reason = "Failed to set gain, status = " + std::to_string(status);
       }
-    } else {
-      result.successful = false;
-      result.reason = "Unknown parameter: " + param.get_name();
     }
   }
   return result;
