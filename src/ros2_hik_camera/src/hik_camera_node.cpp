@@ -61,7 +61,9 @@ void HikCameraNode ::processImage(cv::Mat &rgb_image)
   cv::line(viz, cv::Point(viz.cols / 2, 0), cv::Point(viz.cols / 2, viz.rows),
            cv::Scalar(0, 0, 255), 2);
 
-  res_pub_.publish(cv_bridge::CvImage(header, "bgr8", viz).toImageMsg());
+  cv::Mat viz_resize;
+  cv::resize(viz, viz_resize, cv::Size(640, 480));
+  res_pub_.publish(cv_bridge::CvImage(header, "bgr8", viz_resize).toImageMsg());
 }
 
 void HikCameraNode ::init()
