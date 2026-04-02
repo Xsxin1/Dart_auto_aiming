@@ -51,17 +51,17 @@ namespace hik_camera
 {
 class HikCameraNode : public rclcpp::Node
 {
-public:
+  public:
   /*****************************HIK CAMERA***************************/
   // 构造函数，初始化节点
-  explicit HikCameraNode(const rclcpp::NodeOptions & options);
+  explicit HikCameraNode(const rclcpp::NodeOptions &options);
 
   // 析构函数，销毁节点
   ~HikCameraNode() override;
 
-private:
+  private:
   // 主函数
-  void processImage(cv::Mat & rgb_image);
+  void processImage(cv::Mat &rgb_image);
   void init();
 
   /*****************************KALMAN FILTER***************************/
@@ -77,7 +77,7 @@ private:
   std_msgs::msg::Header header;
 
   /*****************************OPENVINO***************************/
-  cv::Point2f detectYOLO(cv::Mat & origin, cv::Mat & viz, float size);
+  cv::Point2f detectYOLO(cv::Mat &origin, cv::Mat &viz, float size);
 
   YOLO_OPENVINO yolo_openvino;
   ov::CompiledModel model;
@@ -101,7 +101,7 @@ private:
   rclcpp::ParameterEventCallbackHandle::SharedPtr event_callback_handle_;
 
   void declareParams();
-  void paramsEventCB(const rcl_interfaces::msg::ParameterEvent & event);
+  void paramsEventCB(const rcl_interfaces::msg::ParameterEvent &event);
 
   /*****************************HIK CAMERA***************************/
   // 声明参数
@@ -109,15 +109,15 @@ private:
 
   rclcpp::node_interfaces::OnSetParametersCallbackHandle::SharedPtr params_callback_handle_;
   // 参数回调函数
-  rcl_interfaces::msg::SetParametersResult parametersCallback(
-    const std::vector<rclcpp::Parameter> & parameters);
+  rcl_interfaces::msg::SetParametersResult
+  parametersCallback(const std::vector<rclcpp::Parameter> &parameters);
 
   // 图像数据缓冲区
   std::vector<unsigned char> image_buffer_;
   // 相机返回值
 
   int nRet = MV_OK;
-  void * camera_handle_;
+  void *camera_handle_;
   // 图像信息
   MV_IMAGE_BASIC_INFO img_info_;
 
@@ -131,4 +131,4 @@ private:
 
   /*****************************HIK CAMERA***************************/
 };
-}  // namespace hik_camera
+} // namespace hik_camera

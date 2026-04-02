@@ -1,18 +1,33 @@
----
 Language: Cpp
-BasedOnStyle: Google
-
-AccessModifierOffset: -2
-AlignAfterOpenBracket: AlwaysBreak
-BraceWrapping:
-  AfterClass: true
-  AfterFunction: true
-  AfterNamespace: true
-  AfterStruct: true
-BreakBeforeBraces: Custom
-ColumnLimit: 100
-ConstructorInitializerIndentWidth: 0
-ContinuationIndentWidth: 2
-DerivePointerAlignment: false
-PointerAlignment: Middle
-ReflowComments: false
+# 基于LLVM的格式化风格
+BasedOnStyle: LLVM
+# 缩进宽度
+IndentWidth: 2
+# 大括号前换行风格
+BreakBeforeBraces: Allman
+# if总是位于新行
+AllowShortIfStatementsOnASingleLine: true
+# 每行最大字符数
+ColumnLimit: 90
+# 访问说明符(public、private等)的偏移
+AccessModifierOffset: -4
+# 开括号(开圆括号、开尖括号、开方括号)后的对齐: Align, DontAlign, AlwaysBreak(总是在开括号后换行)
+AlignAfterOpenBracket: Align
+# 对齐连续的尾随的注释
+AlignTrailingComments: true
+# 不允许函数声明的所有参数在放在下一行
+AllowAllParametersOfDeclarationOnNextLine: false
+# 允许短的函数放在同一行: None, InlineOnly(定义在类中), Empty(空函数), Inline(定义在类中，空函数), All
+AllowShortFunctionsOnASingleLine: None
+# 允许短的if语句保持在同一行
+AllowShortIfStatementsOnASingleLine: false
+# 允许短的循环保持在同一行
+AllowShortLoopsOnASingleLine: false
+# 在构造函数的初始化列表的冒号后换行
+BreakConstructorInitializers: AfterColon
+# 连续空行的最大数量
+MaxEmptyLinesToKeep: 1
+# 在赋值运算符之前添加空格
+SpaceBeforeAssignmentOperators: true
+# 开圆括号之前添加一个空格: Never, ControlStatements, Always
+SpaceBeforeParens: ControlStatements
