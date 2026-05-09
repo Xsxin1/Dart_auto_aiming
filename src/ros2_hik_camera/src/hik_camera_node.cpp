@@ -43,9 +43,9 @@ void HikCameraNode ::processImage(cv::Mat &rgb_image)
     cv::circle(viz, filtered_center, 5, cv::Scalar(0, 0, 255), -1);
 
     std_msgs::msg::Float64 dyaw_msg;
-    dyaw_msg.data = filtered_center.x - viz.cols / 2;
+    dyaw_msg.data = filtered_center.x - viz.cols / 2.0; // 以图像中心为基准，左负右正
 
-    cv::putText(viz, "dyaw: " + std::to_string(dyaw_msg.data), cv::Point(10, 60),
+    cv::putText(viz, "dyaw: " + std::to_string(filtered_center.x), cv::Point(10, 60),
                 cv::FONT_HERSHEY_SIMPLEX, 1, cv::Scalar(0, 255, 0), 2);
 
     dyaw_msg.data *= Params::dyaw_factor;
@@ -61,9 +61,7 @@ void HikCameraNode ::processImage(cv::Mat &rgb_image)
   cv::line(viz, cv::Point(viz.cols / 2, 0), cv::Point(viz.cols / 2, viz.rows),
            cv::Scalar(0, 0, 255), 2);
 
-  cv::Mat viz_resize;
-  cv::resize(viz, viz_resize, cv::Size(640, 480));
-  res_pub_.publish(cv_bridge::CvImage(header, "bgr8", viz_resize).toImageMsg());
+  res_pub_.publish(cv_bridge::CvImage(header, "bgr8", viz).toImageMsg());
 }
 
 void HikCameraNode ::init()
@@ -172,30 +170,124 @@ cv::Point2f HikCameraNode::detectYOLO(cv::Mat &origin, cv::Mat &viz, float size 
 
   for (size_t i = 0; i < output_box.size(); ++i)
   {
-    auto &box = output_box[i];
+    const auto &box = output_box[i];
     std::vector<std::vector<cv::Point>> contours_;
-    cv::Mat roi;
 
-    if (box.br().y < 0 || box.tl().y < 0 || box.br().y > origin.rows ||
-        box.tl().y > origin.rows)
-      return target;
+    cv::Rect safe_box = box & cv::Rect(0, 0, origin.cols, origin.rows);
+    if (safe_box.area() == 0)
+      continue;
+    cv::Mat roi = origin(safe_box);
 
-    if (box.tl().x < 0)
+    cv::Mat channels[3];
+    cv::split(roi, channels); // BGR
+    cv::Mat g_16, r_16, b_16;
+    channels[1].convertTo(g_16, CV_16S);
+    channels[2].convertTo(r_16, CV_16S);
+    channels[0].convertTo(b_16, CV_16S);
+
+    // Step 1: 找亮区域 (bit 0)
+    cv::Mat final_mask;
+    if (Params::filter_mode & 1)
     {
-      box = cv::Rect(0, box.tl().y, box.width + box.tl().x, box.height);
+      cv::Mat gray;
+      cv::cvtColor(roi, gray, cv::COLOR_BGR2GRAY);
+      cv::threshold(gray, final_mask, Params::binary_thres, 255, cv::THRESH_BINARY);
     }
-    else if (box.br().x > origin.cols)
+    else
     {
-      box = cv::Rect(box.tl().x, box.tl().y, origin.cols - box.tl().x, box.height);
+      final_mask = cv::Mat::ones(roi.size(), CV_8U) * 255;
     }
 
-    roi = origin(box);
+    // Step 2: 排除过曝像素 (bit 1)
+    if (Params::filter_mode & 2)
+    {
+      cv::Mat overexp_mask;
+      cv::bitwise_and(channels[2] > Params::overexp_thres,
+                      channels[1] > Params::overexp_thres, overexp_mask);
+      cv::bitwise_and(overexp_mask, channels[0] > Params::overexp_thres, overexp_mask);
+      cv::Mat not_overexp;
+      cv::bitwise_not(overexp_mask, not_overexp);
+      cv::bitwise_and(final_mask, not_overexp, final_mask);
+    }
 
-    cv::Mat gray, binary;
-    cv::cvtColor(roi, gray, cv::COLOR_BGR2GRAY);
-    cv::threshold(gray, binary, Params::binary_thres, 255, cv::THRESH_BINARY);
+    // Step 3: ExG 像素级绿色判定 (bit 2)
+    if (Params::filter_mode & 4)
+    {
+      cv::Mat exg_mask = ((2 * g_16 - r_16 - b_16) > Params::exg_thres);
+      cv::bitwise_and(final_mask, exg_mask, final_mask);
+    }
 
-    cv::findContours(binary, contours_, cv::RETR_EXTERNAL, cv::CHAIN_APPROX_SIMPLE);
+    // 计算 g_ratio 用于多目标排序（整体特征）
+    int mean_g_ratio = 0;
+    {
+      double mean_g = cv::mean(g_16)[0];
+      double mean_sum = cv::mean(g_16)[0] + cv::mean(r_16)[0] + cv::mean(b_16)[0];
+      if (mean_sum < 1)
+        mean_sum = 1;
+      mean_g_ratio = (int)(mean_g * 100.0 / mean_sum);
+    }
+
+    double green_pixels = cv::countNonZero(final_mask);
+    double total_pixels = roi.rows * roi.cols;
+    double ratio = (total_pixels > 0) ? (green_pixels / total_pixels) : 0;
+
+    // 发布 debug 图像（无论是否通过占比检查都发布）
+    cv::Mat debug_img;
+    cv::cvtColor(final_mask, debug_img, cv::COLOR_GRAY2BGR);
+    cv::resize(debug_img, debug_img, cv::Size(200, 200), 0, 0, cv::INTER_NEAREST);
+    int y = 12;
+    double fs = 0.3;
+    cv::Scalar tc(0, 255, 0);
+    cv::Scalar rc(0, 0, 255);
+
+    // ROI 实际像素统计
+    cv::Scalar mean_bgr = cv::mean(roi);
+    double min_g, max_g;
+    cv::minMaxLoc(channels[1], &min_g, &max_g);
+    int bright_px = cv::countNonZero(final_mask);
+    int overexp_px = 0;
+    if (Params::filter_mode & 2)
+    {
+      cv::Mat oe;
+      cv::bitwise_and(channels[2] > Params::overexp_thres,
+                      channels[1] > Params::overexp_thres, oe);
+      cv::bitwise_and(oe, channels[0] > Params::overexp_thres, oe);
+      overexp_px = cv::countNonZero(oe);
+    }
+
+    cv::putText(debug_img, "mode:" + std::to_string(Params::filter_mode), cv::Point(2, y),
+                cv::FONT_HERSHEY_SIMPLEX, fs, tc, 1);
+    cv::putText(debug_img,
+                "sz:" + std::to_string(roi.cols) + "x" + std::to_string(roi.rows),
+                cv::Point(2, y * 2), cv::FONT_HERSHEY_SIMPLEX, fs, tc, 1);
+    cv::putText(debug_img,
+                "mean B:" + std::to_string((int)mean_bgr[0]) +
+                    " G:" + std::to_string((int)mean_bgr[1]) +
+                    " R:" + std::to_string((int)mean_bgr[2]),
+                cv::Point(2, y * 3), cv::FONT_HERSHEY_SIMPLEX, fs, tc, 1);
+    cv::putText(debug_img,
+                "G min:" + std::to_string((int)min_g) +
+                    " max:" + std::to_string((int)max_g),
+                cv::Point(2, y * 4), cv::FONT_HERSHEY_SIMPLEX, fs, tc, 1);
+    cv::putText(debug_img, "overexp_px:" + std::to_string(overexp_px),
+                cv::Point(2, y * 5), cv::FONT_HERSHEY_SIMPLEX, fs, tc, 1);
+    cv::putText(debug_img,
+                "final_px:" + std::to_string(bright_px) + "/" +
+                    std::to_string((int)total_pixels),
+                cv::Point(2, y * 6), cv::FONT_HERSHEY_SIMPLEX, fs, tc, 1);
+    cv::putText(debug_img,
+                "g_ratio:" + std::to_string(mean_g_ratio) +
+                    " ratio:" + std::to_string(ratio).substr(0, 4),
+                cv::Point(2, y * 7), cv::FONT_HERSHEY_SIMPLEX, fs,
+                (ratio >= Params::green_ratio_thres) ? tc : rc, 1);
+    det_pub_.publish(cv_bridge::CvImage(header, "bgr8", debug_img).toImageMsg());
+
+    if (total_pixels == 0 || ratio < Params::green_ratio_thres)
+    {
+      continue;
+    }
+
+    cv::findContours(final_mask, contours_, cv::RETR_EXTERNAL, cv::CHAIN_APPROX_SIMPLE);
 
     contours_.erase(std::remove_if(contours_.begin(), contours_.end(),
                                    [](const std::vector<cv::Point> &contour)
@@ -217,13 +309,13 @@ cv::Point2f HikCameraNode::detectYOLO(cv::Mat &origin, cv::Mat &viz, float size 
       det.box = box;
       det.center =
           cv::Point((rect.tl().x + rect.br().x) / 2, (rect.tl().y + rect.br().y) / 2);
+      det.g_ratio = mean_g_ratio;
       candidates.push_back(det);
     }
   }
 
   std::sort(candidates.begin(), candidates.end(),
-            [](const Detection &a, const Detection &b)
-            { return a.confidence > b.confidence; });
+            [](const Detection &a, const Detection &b) { return a.g_ratio > b.g_ratio; });
 
   if (candidates.size() > 0)
   {
@@ -234,7 +326,10 @@ cv::Point2f HikCameraNode::detectYOLO(cv::Mat &origin, cv::Mat &viz, float size 
     target.x = best.box.tl().x + best.center.x;
     target.y = best.box.tl().y + best.center.y;
 
-    roi_pub_.publish(cv_bridge::CvImage(header, "bgr8", origin(best.box)).toImageMsg());
+    roi_pub_.publish(
+        cv_bridge::CvImage(header, "bgr8",
+                           origin(best.box & cv::Rect(0, 0, origin.cols, origin.rows)))
+            .toImageMsg());
   }
 
   return target;
@@ -351,7 +446,7 @@ cv::Point2f HikCameraNode::kalmanPredictOnly(double current_timestamp)
 void HikCameraNode::createDebugPub()
 {
   roi_pub_ = image_transport::create_publisher(this, "detector/roi_image");
-  det_pub_ = image_transport::create_publisher(this, "detector/detected_image");
+  det_pub_ = image_transport::create_publisher(this, "detector/binary_image");
   res_pub_ = image_transport::create_publisher(this, "detector/result_image");
 }
 

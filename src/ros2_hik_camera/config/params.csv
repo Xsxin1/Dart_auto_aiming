@@ -3,7 +3,11 @@ detector,std::string,weight_path,"./src/ros2_hik_camera/weight/light_320/best_op
 detector,double,conf_thres,0.25
 detector,double,nms_thres,0.45
 detector,double,dyaw_factor,0.001
-
-detector,int,binary_thres,100
 detector,double,filled_ratio,0.5
 detector,int,loss_thres,5
+
+filter,int,filter_mode,7
+filter.bright,int,binary_thres,100
+filter.overexp,int,overexp_thres,240
+filter.exg,int,exg_thres,30
+filter,double,green_ratio_thres,0.15

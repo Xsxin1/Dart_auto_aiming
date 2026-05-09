@@ -1,23 +1,33 @@
 /hik_camera:
   ros__parameters:
     camera_info_url: "package://rm_vision_bringup/config/camera_info.yaml"
-    exposure_time: 2000         # Unit: us
-    gain: 15.0                      # Range: 0.0 ~ 16.9, Unit: dB
+    exposure_time: 4000         # Unit: us
+    gain: 5.0                      # Range: 0.0 ~ 16.9:  Unit: dB
 
     detector: 
       weight_path: "./src/ros2_hik_camera/weight/light_640_320/best_openvino_model/best.xml"
-      conf_thres: 0.7
+      conf_thres: 0.6
       nms_thres: 0.4
       dyaw_factor: 0.01
       binary_thres: 100
       filled_ratio: 0.5
-      loss_thres: 10
+      loss_thres: 30
+
+    filter:
+      filter_mode: 7
+      green_ratio_thres: 0.2
+      bright:
+        binary_thres: 100
+      overexp:
+        overexp_thres: 240
+      exg:
+        exg_thres: 30
    
 
 /serial_driver:
   ros__parameters:
     timestamp_offset: 0.006
-    device_name: /dev/ttyACM0
+    device_name: /dev/usb-serial
     baud_rate: 115200
     flow_control: none
     parity: none
